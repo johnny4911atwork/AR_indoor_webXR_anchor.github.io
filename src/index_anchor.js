@@ -114,11 +114,11 @@ async function createAnchorInFrame(frame) {
     try {
         markerCount++;
         
-        // 建立錨點姿態：相機位置腳下 1.6 米
+        // 建立錨點姿態
         const pose = new XRRigidTransform(
             {
                 x: camera.position.x,
-                y: camera.position.y - 1.6,
+                y: camera.position.y,
                 z: camera.position.z
             },
             { x: 0, y: 0, z: 0, w: 1 }  // 預設旋轉
@@ -133,7 +133,15 @@ async function createAnchorInFrame(frame) {
             throw new Error('錨點建立失敗');
         }
 
+        // 詳細 debug 資訊
         log(`Anchor created successfully`);
+        log(`Anchor type: ${typeof anchor}`);
+        log(`Anchor constructor: ${anchor.constructor.name}`);
+        log(`Anchor properties: ${Object.getOwnPropertyNames(anchor)}`);
+        log(`Has anchorSpace: ${!!anchor.anchorSpace}`);
+        log(`Has requestPersistentHandle: ${typeof anchor.requestPersistentHandle}`);
+        log(`Has delete: ${typeof anchor.delete}`);
+        log(`Full anchor object:`, anchor);
 
         // 建立視覺標記
         const coordLabel = `#${markerCount}`;
@@ -206,11 +214,20 @@ async function saveAllMarkers() {
 
     info.textContent = '正在請求持久化錨點...';
     log('Requesting persistent handles for all anchors...');
+    log(`Total anchors: ${anchors.length}`);
 
     try {
         // 使用官方規範：呼叫 requestPersistentHandle() 取得 UUID
         const uuidPromises = anchors.map(async (anchor, index) => {
             try {
+                log(`Processing anchor ${index + 1}/${anchors.length}`);
+                log(`Anchor type: ${typeof anchor}`);
+                log(`Has requestPersistentHandle: ${typeof anchor.requestPersistentHandle}`);
+                
+                if (typeof anchor.requestPersistentHandle !== 'function') {
+                    throw new Error(`requestPersistentHandle is not a function. Available methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(anchor))}`);
+                }
+                
                 const uuid = await anchor.requestPersistentHandle();
                 log(`Got UUID for anchor ${index + 1}: ${uuid}`);
                 return {
