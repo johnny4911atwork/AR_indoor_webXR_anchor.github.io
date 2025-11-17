@@ -70,7 +70,7 @@ function createMarker(label = '') {
     canvas.height = 128;
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'Bold 36px Arial';
+    ctx.font = 'Bold 12px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(label, 64, 64);
@@ -116,7 +116,7 @@ async function createAnchorInFrame(frame) {
         const pose = new XRRigidTransform(
             {
                 x: camera.position.x,
-                y: camera.position.y,
+                y: camera.position.y - 1.2,
                 z: camera.position.z
             },
             { x: 0, y: 0, z: 0, w: 1 }  // 預設旋轉
