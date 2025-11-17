@@ -9,6 +9,7 @@ let markers = [];                     // 已放置的訊號點物件集合(THREE
 let anchors = [];                     // 對應的 XRAnchor 物件集合
 let markerCount = 0;                  // 訊號點累計數量
 let savedAnchorUUIDs = [];            // 儲存的錨點 UUID 列表
+let pendingMarkerCreation = false;    // 標記是否需要在下一幀建立標記
 
 const startButton = document.getElementById('startButton');
 const placeMarkerButton = document.getElementById('placeMarkerButton');
@@ -92,14 +93,24 @@ function createMarker(label = '') {
     return group;
 }
 
-// 放置訊號點：使用 Anchor 系統
-async function placeMarker() {
+// 放置訊號點：標記待建立（會在下一幀的 XRFrame 回調中執行）
+function placeMarker() {
     if (!session || !refSpace) {
         log('Session or refSpace not available');
         info.textContent = '請先啟動 AR 模式';
         return;
     }
 
+    // 標記待建立，會在下一幀的 render 回調中執行
+    pendingMarkerCreation = true;
+    info.textContent = '正在建立錨點...';
+    log('Marking marker for creation in next frame');
+}
+
+// 在 XRFrame 回調中建立錨點
+async function createAnchorInFrame(frame) {
+    if (!pendingMarkerCreation || !frame || !refSpace) return;
+    
     try {
         markerCount++;
         
@@ -113,16 +124,9 @@ async function placeMarker() {
             { x: 0, y: 0, z: 0, w: 1 }  // 預設旋轉
         );
 
-        // 使用 XRFrame 建立錨點
-        const frame = renderer.xr.getFrame();
-        if (!frame) {
-            throw new Error('無法取得 XRFrame');
-        }
-
-        info.textContent = `正在建立錨點 #${markerCount}...`;
         log(`Creating anchor at (${pose.position.x.toFixed(2)}, ${pose.position.y.toFixed(2)}, ${pose.position.z.toFixed(2)})`);
 
-        // 建立錨點（相對於 local space）
+        // 在 XRFrame 中建立錨點
         const anchor = await frame.createAnchor(pose, refSpace);
         
         if (!anchor) {
@@ -148,6 +152,8 @@ async function placeMarker() {
         log('ERROR creating anchor: ' + err.message);
         log('Stack: ' + err.stack);
         markerCount--;
+    } finally {
+        pendingMarkerCreation = false;
     }
 }
 
@@ -376,10 +382,13 @@ async function startAR() {
         }
 
         // 檢查持久化錨點 API 支援
-        if (session.persistentAnchors) {
-            anchorStatus.textContent = `✅ 支援持久化錨點 (現有: ${session.persistentAnchors.length})`;
+        const supportsPersistent = session.restorePersistentAnchor && session.deletePersistentAnchor;
+        const persistentCount = session.persistentAnchors?.length || 0;
+        
+        if (supportsPersistent) {
+            anchorStatus.textContent = `✅ 支援持久化錨點 (現有: ${persistentCount})`;
             anchorStatus.style.display = 'block';
-            log(`Persistent anchors supported. Existing: ${session.persistentAnchors.length}`);
+            log(`Persistent anchors supported. Existing: ${persistentCount}`);
         } else {
             anchorStatus.textContent = '⚠️ 不支援持久化錨點（錨點僅在本次 session 有效）';
             anchorStatus.style.display = 'block';
@@ -441,6 +450,11 @@ function render(timestamp, frame) {
             const view = pose.views[0];
             camera.matrix.fromArray(view.transform.matrix);
             camera.matrix.decompose(camera.position, camera.quaternion, camera.scale);
+        }
+
+        // 如果有待建立的標記，在此 XRFrame 中執行
+        if (pendingMarkerCreation) {
+            createAnchorInFrame(frame);
         }
 
         // 更新所有錨點對應的標記位置
