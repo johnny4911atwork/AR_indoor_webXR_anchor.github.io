@@ -133,7 +133,7 @@ async function createAnchorInFrame(frame) {
             throw new Error('錨點建立失敗');
         }
 
-        log(`Anchor created with UUID: ${anchor.anchorUUID || 'N/A'}`);
+        log(`Anchor created successfully`);
 
         // 建立視覺標記
         const coordLabel = `#${markerCount}`;
@@ -198,31 +198,48 @@ function updateMarkerCount() {
 }
 
 // 儲存所有錨點 UUID
-function saveAllMarkers() {
+async function saveAllMarkers() {
     if (anchors.length === 0) {
         info.textContent = '❌ 沒有訊號點可以儲存';
         return;
     }
 
-    // 儲存錨點 UUID（注意：UUID 可能存在於不同屬性）
-    savedAnchorUUIDs = anchors.map((anchor, index) => {
-        const uuid = anchor.anchorUUID || anchor.uuid || `anchor_${index}`;
-        return {
-            uuid: uuid,
-            label: `訊號點 ${index + 1}`,
-            timestamp: new Date().toISOString()
-        };
-    });
+    info.textContent = '正在請求持久化錨點...';
+    log('Requesting persistent handles for all anchors...');
 
-    // 儲存到 localStorage
     try {
+        // 使用官方規範：呼叫 requestPersistentHandle() 取得 UUID
+        const uuidPromises = anchors.map(async (anchor, index) => {
+            try {
+                const uuid = await anchor.requestPersistentHandle();
+                log(`Got UUID for anchor ${index + 1}: ${uuid}`);
+                return {
+                    uuid: uuid,
+                    label: `訊號點 ${index + 1}`,
+                    timestamp: new Date().toISOString()
+                };
+            } catch (err) {
+                log(`ERROR getting UUID for anchor ${index + 1}: ${err.message}`);
+                return null;
+            }
+        });
+
+        const results = await Promise.all(uuidPromises);
+        savedAnchorUUIDs = results.filter(item => item !== null);
+
+        if (savedAnchorUUIDs.length === 0) {
+            info.textContent = '❌ 無法取得任何錨點的持久化 UUID';
+            return;
+        }
+
+        // 儲存到 localStorage
         localStorage.setItem('persistentAnchors', JSON.stringify(savedAnchorUUIDs));
         info.textContent = `✅ 已儲存 ${savedAnchorUUIDs.length} 個錨點 UUID`;
         log(`Saved ${savedAnchorUUIDs.length} anchor UUIDs to localStorage`);
         updateMarkerCount();
     } catch (err) {
         info.textContent = `❌ 儲存失敗: ${err.message}`;
-        log('ERROR saving to localStorage: ' + err.message);
+        log('ERROR saving anchors: ' + err.message);
     }
 }
 
@@ -320,20 +337,30 @@ async function clearAllMarkers() {
         return;
     }
 
+    // 使用官方規範：呼叫 anchor.delete() 刪除錨點
+    for (const anchor of anchors) {
+        try {
+            anchor.delete();
+            log('Deleted anchor using anchor.delete()');
+        } catch (err) {
+            log(`Failed to delete anchor: ${err.message}`);
+        }
+    }
+
     // 刪除場景中的標記
     markers.forEach(marker => scene.remove(marker));
     markers = [];
     anchors = [];
     markerCount = 0;
 
-    // 嘗試刪除持久化錨點
+    // 嘗試刪除持久化錨點（從 session 層級）
     if (session && session.deletePersistentAnchor && savedAnchorUUIDs.length > 0) {
         for (const data of savedAnchorUUIDs) {
             try {
                 await session.deletePersistentAnchor(data.uuid);
-                log(`Deleted persistent anchor: ${data.uuid}`);
+                log(`Deleted persistent anchor from session: ${data.uuid}`);
             } catch (err) {
-                log(`Failed to delete anchor ${data.uuid}: ${err.message}`);
+                log(`Failed to delete persistent anchor ${data.uuid}: ${err.message}`);
             }
         }
     }
@@ -381,20 +408,29 @@ async function startAR() {
             log('Using viewer reference space');
         }
 
+        /*
         // 檢查持久化錨點 API 支援
         const supportsPersistent = session.restorePersistentAnchor && session.deletePersistentAnchor;
-        const persistentCount = session.persistentAnchors?.length || 0;
         
         if (supportsPersistent) {
-            anchorStatus.textContent = `✅ 支援持久化錨點 (現有: ${persistentCount})`;
+            // 檢查 persistentAnchors 屬性並記錄現有持久化錨點
+            let persistentList = [];
+            try {
+                persistentList = session.persistentAnchors || [];
+                log(`session.persistentAnchors: ${JSON.stringify(persistentList)}`);
+            } catch (err) {
+                log(`ERROR accessing session.persistentAnchors: ${err.message}`);
+            }
+            
+            anchorStatus.textContent = `✅ 支援持久化錨點 (現有: ${persistentList.length})`;
             anchorStatus.style.display = 'block';
-            log(`Persistent anchors supported. Existing: ${persistentCount}`);
+            log(`Persistent anchors supported. Existing: ${persistentList.length}`);
         } else {
             anchorStatus.textContent = '⚠️ 不支援持久化錨點（錨點僅在本次 session 有效）';
             anchorStatus.style.display = 'block';
             log('WARNING: Persistent anchors not supported');
         }
-
+        */
         session.addEventListener('end', () => {
             log('AR session ended');
             session = null;
