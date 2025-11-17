@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebXR Persistent Anchors 訊號點系統</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background-color: #000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+
+        button {
+            margin: 5px;
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            background-color: #007BFF;
+            color: white;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+
+        #info {
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+
+        #markerCount {
+            margin-top: 10px;
+            font-size: 16px;
+        }
+
+        #anchorStatus {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="info">正在檢查 WebXR 支援...</div>
+        
+        <button id="startButton" style="display: none;">開始 AR</button>
+        <button id="placeMarkerButton" style="display: none;">放置訊號點</button>
+        <button id="restoreButton" style="display: none;">恢復已儲存的訊號點</button>
+        <button id="saveButton" style="display: none;">儲存訊號點</button>
+        <button id="downloadButton" style="display: none;">下載 JSON</button>
+        <button id="clearButton" style="display: none;">清除所有訊號點</button>
+        
+        <div id="markerCount" style="display: none;">訊號點數量: 0</div>
+        <div id="anchorStatus" style="display: none; margin-top: 10px; font-size: 14px; color: #888;"></div>
+    </div>
+
+    <script type="module" src="index_anchor.js"></script>
+</body>
+</html>
