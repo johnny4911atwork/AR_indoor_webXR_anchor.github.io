@@ -60,7 +60,7 @@ function createMarker(label = '') {
     });
     const circle = new THREE.Mesh(circleGeometry, circleMaterial);
     circle.rotation.x = -Math.PI / 2;
-    circle.position.y = 0;
+    circle.position.y = 0.01;
     circle.position.z = -0.01;
     group.add(circle);
 
@@ -83,7 +83,7 @@ function createMarker(label = '') {
     });
     const textGeometry = new THREE.PlaneGeometry(0.3, 0.3);
     const textMesh = new THREE.Mesh(textGeometry, textMaterial);
-    textMesh.position.y = 0;
+    textMesh.position.y = -0.01;
     textMesh.rotation.x = -Math.PI / 2;
     textMesh.position.z = 0.01;
     group.add(textMesh);
