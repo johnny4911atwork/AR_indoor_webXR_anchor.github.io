@@ -13,9 +13,7 @@ let pendingMarkerCreation = false;    // 標記是否需要在下一幀建立標
 
 const startButton = document.getElementById('startButton');
 const placeMarkerButton = document.getElementById('placeMarkerButton');
-const restoreButton = document.getElementById('restoreButton');
 const saveButton = document.getElementById('saveButton');
-const downloadButton = document.getElementById('downloadButton');
 const clearButton = document.getElementById('clearButton');
 const info = document.getElementById('info');
 const markerCountDiv = document.getElementById('markerCount');
@@ -195,14 +193,6 @@ function updateMarkerCount() {
         saveButton.style.display = 'none';
         clearButton.style.display = 'none';
     }
-    
-    if (savedAnchorUUIDs.length > 0) {
-        downloadButton.style.display = 'inline-block';
-        restoreButton.style.display = session ? 'inline-block' : 'none';
-    } else {
-        downloadButton.style.display = 'none';
-        restoreButton.style.display = 'none';
-    }
 }
 
 // 儲存所有錨點 UUID
@@ -258,94 +248,6 @@ async function saveAllMarkers() {
         info.textContent = `❌ 儲存失敗: ${err.message}`;
         log('ERROR saving anchors: ' + err.message);
     }
-}
-
-// 恢復已儲存的錨點
-async function restoreSavedMarkers() {
-    if (!session) {
-        info.textContent = '❌ 請先啟動 AR 模式';
-        return;
-    }
-
-    // 從 localStorage 讀取
-    try {
-        const stored = localStorage.getItem('persistentAnchors');
-        if (!stored) {
-            info.textContent = '❌ 沒有已儲存的錨點';
-            return;
-        }
-
-        const anchorData = JSON.parse(stored);
-        if (anchorData.length === 0) {
-            info.textContent = '❌ 沒有已儲存的錨點';
-            return;
-        }
-
-        info.textContent = `正在恢復 ${anchorData.length} 個錨點...`;
-        log(`Attempting to restore ${anchorData.length} anchors`);
-
-        let successCount = 0;
-        let failCount = 0;
-
-        // 檢查 session 是否支援 restorePersistentAnchor
-        if (!session.restorePersistentAnchor) {
-            info.textContent = '❌ 此裝置不支援持久化錨點恢復';
-            log('ERROR: restorePersistentAnchor not supported');
-            return;
-        }
-
-        for (let i = 0; i < anchorData.length; i++) {
-            const data = anchorData[i];
-            try {
-                const anchor = await session.restorePersistentAnchor(data.uuid);
-                
-                if (anchor) {
-                    const marker = createMarker(data.label || `#${i + 1}`);
-                    scene.add(marker);
-                    markers.push(marker);
-                    anchors.push(anchor);
-                    markerCount++;
-                    successCount++;
-                    log(`Restored anchor: ${data.uuid}`);
-                } else {
-                    failCount++;
-                    log(`Failed to restore anchor: ${data.uuid}`);
-                }
-            } catch (err) {
-                failCount++;
-                log(`ERROR restoring anchor ${data.uuid}: ${err.message}`);
-            }
-        }
-
-        updateMarkerCount();
-        info.textContent = `✅ 恢復 ${successCount} 個訊號點 ${failCount > 0 ? `(${failCount} 個失敗)` : ''}`;
-        
-    } catch (err) {
-        info.textContent = `❌ 恢復失敗: ${err.message}`;
-        log('ERROR restoring anchors: ' + err.message);
-    }
-}
-
-// 下載錨點資料為 JSON 檔案
-function downloadMarkersAsJSON() {
-    if (savedAnchorUUIDs.length === 0) {
-        info.textContent = '❌ 沒有儲存的錨點';
-        return;
-    }
-
-    const dataStr = JSON.stringify(savedAnchorUUIDs, null, 2);
-    const dataBlob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(dataBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `anchors_${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    info.textContent = `📥 已下載 ${savedAnchorUUIDs.length} 個錨點資料`;
-    log(`Downloaded ${savedAnchorUUIDs.length} anchor UUIDs`);
 }
 
 // 清除所有訊號點
@@ -454,7 +356,6 @@ async function startAR() {
             refSpace = null;
             startButton.style.display = 'block';
             placeMarkerButton.style.display = 'none';
-            restoreButton.style.display = 'none';
             saveButton.style.display = 'none';
             clearButton.style.display = 'none';
             markerCountDiv.style.display = 'none';
@@ -546,9 +447,7 @@ async function checkWebXRSupport() {
 // 事件監聽
 startButton.addEventListener('click', startAR);
 placeMarkerButton.addEventListener('click', placeMarker);
-restoreButton.addEventListener('click', restoreSavedMarkers);
 saveButton.addEventListener('click', saveAllMarkers);
-downloadButton.addEventListener('click', downloadMarkersAsJSON);
 clearButton.addEventListener('click', clearAllMarkers);
 
 // 初始化
