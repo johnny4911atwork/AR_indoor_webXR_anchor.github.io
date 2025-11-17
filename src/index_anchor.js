@@ -32,6 +32,7 @@ const imageInput = document.getElementById('imageInput');
 const imagePreview = document.getElementById('imagePreview');
 const confirmImageButton = document.getElementById('confirmImageButton');
 const cancelImageButton = document.getElementById('cancelImageButton');
+const trackingStatus = document.getElementById('trackingStatus');
 
 // 簡單除錯輸出：僅同步到 console
 function log(msg) {
@@ -265,12 +266,17 @@ async function startAR() {
         
         // 如果有參考圖片，啟用 image-tracking
         if (referenceImage) {
-            sessionInit.requiredFeatures.push('image-tracking');
-            sessionInit.trackedImages = [{
-                image: referenceImage,
-                widthInMeters: 0.2 // 假設圖片寬度為 20cm
-            }];
-            log('Image tracking enabled');
+            try {
+                sessionInit.optionalFeatures.push('image-tracking');
+                sessionInit.trackedImages = [{
+                    image: referenceImage,
+                    widthInMeters: 0.3 // 假設圖片寬度為 30cm（A4 紙大小）
+                }];
+                log('Image tracking configuration added');
+                log(`Image size: ${referenceImage.width}x${referenceImage.height}`);
+            } catch (e) {
+                log('Image tracking setup error: ' + e.message);
+            }
         }
         
         session = await navigator.xr.requestSession('immersive-ar', sessionInit);
@@ -301,6 +307,7 @@ async function startAR() {
             saveButton.style.display = 'none';
             clearButton.style.display = 'none';
             markerCountDiv.style.display = 'none';
+            trackingStatus.style.display = 'none';
             modeSelection.style.display = 'block';
             info.textContent = 'AR 已結束，請選擇模式';
         });
@@ -308,6 +315,12 @@ async function startAR() {
         startButton.style.display = 'none';
         markerCountDiv.style.display = 'block';
         updateMarkerCount();
+        
+        // 顯示追蹤狀態
+        if (referenceImage) {
+            trackingStatus.style.display = 'block';
+            trackingStatus.textContent = '🔍 尋找參考圖片中...';
+        }
         
         if (currentMode === 'record') {
             placeMarkerButton.style.display = 'block';
@@ -339,36 +352,72 @@ function render(timestamp, frame) {
         }
         
         // 處理圖片追蹤
-        if (session.trackedImageScores) {
-            const results = frame.getImageTrackingResults();
-            
-            for (const result of results) {
-                const state = result.trackingState;
+        if (referenceImage && frame.getImageTrackingResults) {
+            try {
+                const results = frame.getImageTrackingResults();
                 
-                if (state === 'tracked') {
-                    const imagePose = frame.getPose(result.imageSpace, refSpace);
+                if (results && results.length > 0) {
+                    let tracked = false;
                     
-                    if (imagePose) {
-                        const transform = imagePose.transform;
-                        const position = new THREE.Vector3(
-                            transform.position.x,
-                            transform.position.y,
-                            transform.position.z
-                        );
+                    for (const result of results) {
+                        const state = result.trackingState;
                         
-                        // 更新圖片錨點位置
-                        imageAnchor = position;
-                        
-                        // 如果是播放模式，重現訊號點
-                        if (currentMode === 'play' && markers.length === 0 && savedMarkers.length > 0) {
-                            restoreMarkers();
+                        if (state === 'tracked') {
+                            tracked = true;
+                            const imagePose = frame.getPose(result.imageSpace, refSpace);
+                            
+                            if (imagePose) {
+                                const transform = imagePose.transform;
+                                const position = new THREE.Vector3(
+                                    transform.position.x,
+                                    transform.position.y,
+                                    transform.position.z
+                                );
+                                
+                                // 更新圖片錨點位置
+                                const previousAnchor = imageAnchor;
+                                imageAnchor = position;
+                                
+                                // 更新追蹤狀態顯示
+                                trackingStatus.textContent = '✅ 已鎖定參考圖片';
+                                trackingStatus.style.background = 'rgba(76,175,80,0.9)';
+                                
+                                // 如果是第一次追蹤到
+                                if (!previousAnchor) {
+                                    log(`Image first tracked at (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
+                                    
+                                    // 如果是播放模式，重現訊號點
+                                    if (currentMode === 'play' && markers.length === 0 && savedMarkers.length > 0) {
+                                        restoreMarkers();
+                                    }
+                                }
+                            }
+                        } else if (state === 'emulated') {
+                            tracked = true;
+                            trackingStatus.textContent = '⚠️ 模擬追蹤中';
+                            trackingStatus.style.background = 'rgba(255,152,0,0.9)';
+                            log('Image tracking: emulated');
                         }
-                        
-                        log(`Image tracked at (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
                     }
-                } else if (state === 'emulated') {
-                    log('Image tracking: emulated');
+                    
+                    if (!tracked) {
+                        trackingStatus.textContent = '🔍 尋找參考圖片中...';
+                        trackingStatus.style.background = 'rgba(255,152,0,0.9)';
+                        imageAnchor = null;
+                    }
+                } else {
+                    trackingStatus.textContent = '🔍 尋找參考圖片中...';
+                    trackingStatus.style.background = 'rgba(255,152,0,0.9)';
                 }
+            } catch (e) {
+                log('Image tracking error: ' + e.message);
+            }
+        } else if (referenceImage && !frame.getImageTrackingResults) {
+            // 如果不支援 image tracking
+            if (trackingStatus.textContent.indexOf('不支援') === -1) {
+                trackingStatus.textContent = '❌ 裝置不支援圖片追蹤';
+                trackingStatus.style.background = 'rgba(244,67,54,0.9)';
+                log('ERROR: Image tracking not supported by device');
             }
         }
     }
@@ -450,8 +499,28 @@ imageInput.addEventListener('change', async (event) => {
         // 建立 ImageBitmap
         const img = new Image();
         img.onload = async () => {
-            referenceImage = await createImageBitmap(img);
-            log('Reference image loaded');
+            // 調整圖片大小以提高追蹤效果
+            const maxSize = 512;
+            let width = img.width;
+            let height = img.height;
+            
+            if (width > maxSize || height > maxSize) {
+                if (width > height) {
+                    height = (height / width) * maxSize;
+                    width = maxSize;
+                } else {
+                    width = (width / height) * maxSize;
+                    height = maxSize;
+                }
+            }
+            
+            referenceImage = await createImageBitmap(img, {
+                resizeWidth: Math.floor(width),
+                resizeHeight: Math.floor(height),
+                resizeQuality: 'high'
+            });
+            
+            log(`Reference image loaded: ${referenceImage.width}x${referenceImage.height}`);
         };
         img.src = e.target.result;
     };
@@ -504,11 +573,31 @@ playModeButton.addEventListener('click', async () => {
         // 載入參考圖片
         const img = new Image();
         img.onload = async () => {
-            referenceImage = await createImageBitmap(img);
+            // 調整圖片大小以提高追蹤效果
+            const maxSize = 512;
+            let width = img.width;
+            let height = img.height;
+            
+            if (width > maxSize || height > maxSize) {
+                if (width > height) {
+                    height = (height / width) * maxSize;
+                    width = maxSize;
+                } else {
+                    width = (width / height) * maxSize;
+                    height = maxSize;
+                }
+            }
+            
+            referenceImage = await createImageBitmap(img, {
+                resizeWidth: Math.floor(width),
+                resizeHeight: Math.floor(height),
+                resizeQuality: 'high'
+            });
+            
             modeSelection.style.display = 'none';
             startButton.style.display = 'block';
             info.textContent = `✅ 已載入 ${savedMarkers.length} 個訊號點，對準參考圖片後開始 AR`;
-            log('Play mode: data loaded');
+            log(`Play mode: data loaded, image ${referenceImage.width}x${referenceImage.height}`);
         };
         img.src = imageData;
         
