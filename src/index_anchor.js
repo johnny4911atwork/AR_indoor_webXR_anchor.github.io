@@ -408,7 +408,7 @@ async function startAR() {
             log('Using viewer reference space');
         }
 
-        /*
+        
         // 檢查持久化錨點 API 支援
         const supportsPersistent = session.restorePersistentAnchor && session.deletePersistentAnchor;
         
@@ -430,7 +430,7 @@ async function startAR() {
             anchorStatus.style.display = 'block';
             log('WARNING: Persistent anchors not supported');
         }
-        */
+
         session.addEventListener('end', () => {
             log('AR session ended');
             session = null;
