@@ -671,13 +671,14 @@ playModeButton.addEventListener('click', async () => {
             return;
         }
         
-        // 根據儲存的訊號點數量生成標籤（不依賴座標資訊）
-        const markerCount = markersData.markerCount || 0;
-        savedMarkers = Array.from({ length: markerCount }, (_, i) => ({
-            id: i + 1,
-            label: `#${i + 1}`,
-            timestamp: new Date().toISOString()
-        }));
+        // 載入訊號點資料（已包含相對位置）
+        savedMarkers = markersData.markers || [];
+        
+        if (savedMarkers.length === 0) {
+            info.textContent = '❌ 沒有找到訊號點資料';
+            modeSelection.style.display = 'block';
+            return;
+        }
         
         // 載入參考圖片（從 Blob 轉換為 ImageBitmap）
         referenceImage = await createImageBitmap(imageData.imageBlob);
@@ -685,7 +686,8 @@ playModeButton.addEventListener('click', async () => {
         modeSelection.style.display = 'none';
         startButton.style.display = 'block';
         info.textContent = `✅ 已載入 ${savedMarkers.length} 個訊號點，對準參考圖片後開始 AR`;
-        log(`Play mode: data loaded, image ${referenceImage.width}x${referenceImage.height}`);
+        log(`Play mode: data loaded, ${savedMarkers.length} markers, image ${referenceImage.width}x${referenceImage.height}`);
+        log('Markers:', savedMarkers);
         
     } catch (e) {
         info.textContent = '❌ 載入資料失敗：' + e.message;
