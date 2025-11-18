@@ -14,8 +14,6 @@ let currentMode = null;               // 'record' 或 'play'
 let referenceImage = null;            // 參考圖片的 Bitmap
 let trackedImages = new Map();        // 追蹤到的圖片位置
 let imageAnchor = null;               // 圖片錨點位置
-let imageAnchorMatrix = null;         // 圖片錨點的世界矩陣
-let imageAnchorMatrixInverse = null;  // 圖片錨點矩陣的反矩陣
 
 const startButton = document.getElementById('startButton');
 const placeMarkerButton = document.getElementById('placeMarkerButton');
@@ -202,23 +200,10 @@ function placeMarker() {
     const markerPosition = camera.position.clone();
     markerPosition.y = camera.position.y - 1.6; // 腳下約 1.6 米
 
-    // 如果有圖片錨點，計算相對位置
-    let relativePosition = markerPosition.clone();
-    let relativeSpace = 'absolute';
-
-    if (imageAnchorMatrixInverse) {
-        relativePosition.applyMatrix4(imageAnchorMatrixInverse);
-        relativeSpace = 'anchor-local';
-    } else if (imageAnchor) {
-        relativePosition.sub(imageAnchor);
-        relativeSpace = 'world';
-    }
-
     const coordLabel = `#${markerCount}`;
     const marker = createMarker(coordLabel);
     marker.position.copy(markerPosition);
-    marker.userData.relativePosition = relativePosition; // 儲存相對位置
-    marker.userData.relativeSpace = relativeSpace;
+    marker.userData.index = markerCount; // 只儲存訊號點的編號
     
     scene.add(marker);
     markers.push(marker);
@@ -226,7 +211,6 @@ function placeMarker() {
     updateMarkerCount();
     info.textContent = `已放置訊號點 ${coordLabel}`;
     log(`Marker ${markerCount} placed at (${marker.position.x.toFixed(2)}, ${marker.position.y.toFixed(2)}, ${marker.position.z.toFixed(2)})`);
-    log(`Relative (${relativeSpace}) to anchor: (${relativePosition.x.toFixed(2)}, ${relativePosition.y.toFixed(2)}, ${relativePosition.z.toFixed(2)})`);
 }
 
 // 更新 UI 顯示目前訊號點數量
@@ -255,27 +239,20 @@ async function saveAllMarkers() {
         return;
     }
 
-    // 將目前的訊號點資料儲存（相對座標）
-    const markerData = markers.map((marker, index) => ({
-        id: index + 1,
-        relativePosition: {
-            x: (marker.userData.relativePosition?.x ?? marker.position.x),
-            y: (marker.userData.relativePosition?.y ?? marker.position.y),
-            z: (marker.userData.relativePosition?.z ?? marker.position.z),
-            space: marker.userData.relativeSpace || 'world'
-        },
-        label: `#${index + 1}`,
+    // 只儲存訊號點數量（不儲存座標資訊）
+    const markerCount = markers.length;
+    savedMarkers = Array.from({ length: markerCount }, (_, i) => ({
+        id: i + 1,
+        label: `#${i + 1}`,
         timestamp: new Date().toISOString()
     }));
-
-    savedMarkers = [...markerData];
     
     // 儲存到 IndexedDB
     try {
-        // 儲存訊號點資料
+        // 儲存訊號點資料（只儲存數量）
         await saveToIndexedDB(STORE_MARKERS, {
             id: 'current',
-            markers: savedMarkers,
+            markerCount: markerCount,
             timestamp: new Date().toISOString()
         });
         
@@ -409,8 +386,6 @@ async function startAR() {
             session = null;
             refSpace = null;
             imageAnchor = null;
-            imageAnchorMatrix = null;
-            imageAnchorMatrixInverse = null;
             startButton.style.display = 'none';
             placeMarkerButton.style.display = 'none';
             saveButton.style.display = 'none';
@@ -482,22 +457,10 @@ function render(timestamp, frame) {
                                     transform.position.y,
                                     transform.position.z
                                 );
-                                const orientation = new THREE.Quaternion(
-                                    transform.orientation?.x ?? 0,
-                                    transform.orientation?.y ?? 0,
-                                    transform.orientation?.z ?? 0,
-                                    transform.orientation?.w ?? 1
-                                );
                                 
                                 // 更新圖片錨點位置
                                 const previousAnchor = imageAnchor;
-                                imageAnchor = position.clone();
-                                imageAnchorMatrix = new THREE.Matrix4().compose(
-                                    imageAnchor.clone(),
-                                    orientation.normalize(),
-                                    new THREE.Vector3(1, 1, 1)
-                                );
-                                imageAnchorMatrixInverse = imageAnchorMatrix.clone().invert();
+                                imageAnchor = position;
                                 
                                 // 更新追蹤狀態顯示
                                 trackingStatus.textContent = '✅ 已鎖定參考圖片';
@@ -525,14 +488,10 @@ function render(timestamp, frame) {
                         trackingStatus.textContent = '🔍 尋找參考圖片中...';
                         trackingStatus.style.background = 'rgba(255,152,0,0.9)';
                         imageAnchor = null;
-                        imageAnchorMatrix = null;
-                        imageAnchorMatrixInverse = null;
                     }
                 } else {
                     trackingStatus.textContent = '🔍 尋找參考圖片中...';
                     trackingStatus.style.background = 'rgba(255,152,0,0.9)';
-                    imageAnchorMatrix = null;
-                    imageAnchorMatrixInverse = null;
                 }
             } catch (e) {
                 log('Image tracking error: ' + e.message);
@@ -544,8 +503,6 @@ function render(timestamp, frame) {
                 trackingStatus.style.background = 'rgba(244,67,54,0.9)';
                 log('ERROR: Image tracking not supported by device');
             }
-            imageAnchorMatrix = null;
-            imageAnchorMatrixInverse = null;
         }
     }
     renderer.render(scene, camera);
@@ -595,42 +552,31 @@ async function checkWebXRSupport() {
     }
 }
 
-// 重現儲存的訊號點
+// 重現儲存的訊號點 - 即時基於參考圖片的追蹤位置生成
 function restoreMarkers() {
     if (!imageAnchor || savedMarkers.length === 0) return;
     
     log('Restoring markers...');
     
-    savedMarkers.forEach((data) => {
+    // 清除已存在的訊號點
+    markers.forEach(marker => scene.remove(marker));
+    markers = [];
+    
+    // 根據參考圖片錨點和訊號點編號動態生成位置
+    savedMarkers.forEach((data, index) => {
         const marker = createMarker(data.label);
-        const stored = data.relativePosition || {};
-        const relativeSpace = stored.space || 'world';
-        const relativeVector = new THREE.Vector3(
-            stored.x ?? 0,
-            stored.y ?? 0,
-            stored.z ?? 0
+        
+        // 基於圖片錨點，使用簡單的線性排列
+        // 可根據需求調整訊號點的布局方式
+        const offset = 0.25 * (index + 1); // 每個訊號點距離圖片錨點 0.25m
+        const worldPosition = new THREE.Vector3(
+            imageAnchor.x + offset,
+            imageAnchor.y,
+            imageAnchor.z - 0.2 * (index % 2) // 稍微交錯排列
         );
-        let worldPosition;
-
-        if (relativeSpace === 'anchor-local') {
-            if (!imageAnchorMatrix) {
-                log('⚠️ Anchor matrix missing, skipping anchor-local marker');
-                return;
-            }
-            worldPosition = relativeVector.clone().applyMatrix4(imageAnchorMatrix);
-        } else if (relativeSpace === 'world') {
-            worldPosition = new THREE.Vector3(
-                imageAnchor.x + relativeVector.x,
-                imageAnchor.y + relativeVector.y,
-                imageAnchor.z + relativeVector.z
-            );
-        } else {
-            worldPosition = relativeVector.clone();
-        }
         
         marker.position.copy(worldPosition);
-        marker.userData.relativePosition = relativeVector.clone();
-        marker.userData.relativeSpace = relativeSpace;
+        marker.userData.index = data.id;
         
         scene.add(marker);
         markers.push(marker);
@@ -705,7 +651,13 @@ playModeButton.addEventListener('click', async () => {
             return;
         }
         
-        savedMarkers = markersData.markers;
+        // 根據儲存的訊號點數量生成標籤（不依賴座標資訊）
+        const markerCount = markersData.markerCount || 0;
+        savedMarkers = Array.from({ length: markerCount }, (_, i) => ({
+            id: i + 1,
+            label: `#${i + 1}`,
+            timestamp: new Date().toISOString()
+        }));
         
         // 載入參考圖片（從 Blob 轉換為 ImageBitmap）
         referenceImage = await createImageBitmap(imageData.imageBlob);
