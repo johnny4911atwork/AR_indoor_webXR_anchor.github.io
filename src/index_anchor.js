@@ -514,30 +514,10 @@ imageInput.addEventListener('change', async (event) => {
         imagePreview.style.display = 'block';
         confirmImageButton.style.display = 'inline-block';
         
-        // 建立 ImageBitmap
+        // 建立 ImageBitmap（保留原始解析度）
         const img = new Image();
         img.onload = async () => {
-            // 調整圖片大小以提高追蹤效果
-            const maxSize = 512;
-            let width = img.width;
-            let height = img.height;
-            
-            if (width > maxSize || height > maxSize) {
-                if (width > height) {
-                    height = (height / width) * maxSize;
-                    width = maxSize;
-                } else {
-                    width = (width / height) * maxSize;
-                    height = maxSize;
-                }
-            }
-            
-            referenceImage = await createImageBitmap(img, {
-                resizeWidth: Math.floor(width),
-                resizeHeight: Math.floor(height),
-                resizeQuality: 'high'
-            });
-            
+            referenceImage = await createImageBitmap(img);
             log(`Reference image loaded: ${referenceImage.width}x${referenceImage.height}`);
         };
         img.src = e.target.result;
@@ -588,30 +568,10 @@ playModeButton.addEventListener('click', async () => {
         
         savedMarkers = JSON.parse(markersData);
         
-        // 載入參考圖片
+        // 載入參考圖片（保留原始解析度）
         const img = new Image();
         img.onload = async () => {
-            // 調整圖片大小以提高追蹤效果
-            const maxSize = 512;
-            let width = img.width;
-            let height = img.height;
-            
-            if (width > maxSize || height > maxSize) {
-                if (width > height) {
-                    height = (height / width) * maxSize;
-                    width = maxSize;
-                } else {
-                    width = (width / height) * maxSize;
-                    height = maxSize;
-                }
-            }
-            
-            referenceImage = await createImageBitmap(img, {
-                resizeWidth: Math.floor(width),
-                resizeHeight: Math.floor(height),
-                resizeQuality: 'high'
-            });
-            
+            referenceImage = await createImageBitmap(img);
             modeSelection.style.display = 'none';
             startButton.style.display = 'block';
             info.textContent = `✅ 已載入 ${savedMarkers.length} 個訊號點，對準參考圖片後開始 AR`;
