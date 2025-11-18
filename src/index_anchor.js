@@ -242,21 +242,34 @@ async function saveAllMarkers() {
         return;
     }
 
-    // 儲存訊號點的絕對座標
-    savedMarkers = markers.map((marker, index) => ({
-        id: marker.userData.index,
-        label: `#${marker.userData.index}`,
-        position: {
-            x: marker.position.x,
-            y: marker.position.y,
-            z: marker.position.z
-        },
-        timestamp: new Date().toISOString()
-    }));
+    if (!imageAnchor && currentMode === 'record') {
+        info.textContent = '❌ 必須先對準參考圖片才能儲存';
+        return;
+    }
+
+    // 計算訊號點相對於參考圖片錨點的偏移量
+    savedMarkers = markers.map((marker, index) => {
+        const offset = new THREE.Vector3(
+            marker.position.x - imageAnchor.x,
+            marker.position.y - imageAnchor.y,
+            marker.position.z - imageAnchor.z
+        );
+        
+        return {
+            id: marker.userData.index,
+            label: `#${marker.userData.index}`,
+            offset: {
+                x: offset.x,
+                y: offset.y,
+                z: offset.z
+            },
+            timestamp: new Date().toISOString()
+        };
+    });
     
     // 儲存到 IndexedDB
     try {
-        // 儲存訊號點資料（包含座標）
+        // 儲存訊號點資料（相對位置）
         await saveToIndexedDB(STORE_MARKERS, {
             id: 'current',
             markers: savedMarkers,
@@ -283,8 +296,8 @@ async function saveAllMarkers() {
             });
         }
         
-        info.textContent = `✅ 已儲存 ${savedMarkers.length} 個訊號點`;
-        log(`Saved ${savedMarkers.length} markers to IndexedDB`);
+        info.textContent = `✅ 已儲存 ${savedMarkers.length} 個訊號點（相對於參考圖片）`;
+        log(`Saved ${savedMarkers.length} markers with relative positions to image anchor`);
     } catch (e) {
         info.textContent = '❌ 儲存失敗：' + e.message;
         log('Save error: ' + e.message);
@@ -559,35 +572,31 @@ async function checkWebXRSupport() {
     }
 }
 
-// 重現儲存的訊號點 - 使用保存的絕對座標
+// 重現儲存的訊號點 - 使用保存的相對位置
 function restoreMarkers() {
-    if (savedMarkers.length === 0) return;
+    if (!imageAnchor || savedMarkers.length === 0) return;
     
-    log('Restoring markers...');
+    log('Restoring markers relative to image anchor...');
     
     // 清除已存在的訊號點
     markers.forEach(marker => scene.remove(marker));
     markers = [];
     
-    // 根據保存的絕對座標重現訊號點
+    // 根據新掃描的 imageAnchor 和保存的相對位置重現訊號點
     savedMarkers.forEach((data) => {
         const marker = createMarker(data.label);
         
-        // 使用保存的座標
-        if (data.position) {
-            marker.position.set(
-                data.position.x,
-                data.position.y,
-                data.position.z
+        // 使用保存的偏移量 + 新的 imageAnchor 位置
+        if (data.offset) {
+            const worldPosition = new THREE.Vector3(
+                imageAnchor.x + data.offset.x,
+                imageAnchor.y + data.offset.y,
+                imageAnchor.z + data.offset.z
             );
+            marker.position.copy(worldPosition);
         }
         
         marker.userData.index = data.id;
-        marker.userData.absolutePosition = new THREE.Vector3(
-            data.position.x,
-            data.position.y,
-            data.position.z
-        );
         
         scene.add(marker);
         markers.push(marker);
@@ -596,7 +605,7 @@ function restoreMarkers() {
     markerCount = markers.length;
     updateMarkerCount();
     info.textContent = `✅ 已重現 ${markers.length} 個訊號點`;
-    log(`Restored ${markers.length} markers`);
+    log(`Restored ${markers.length} markers at relative positions to new image anchor`);
 }
 
 // 圖片上傳處理
