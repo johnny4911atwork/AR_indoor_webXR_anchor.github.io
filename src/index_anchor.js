@@ -390,6 +390,12 @@ async function startAR() {
 
         session.addEventListener('end', () => {
             log('AR session ended');
+            
+            // 移除所有訊號點
+            markers.forEach(marker => scene.remove(marker));
+            markers = [];
+            markerCount = 0;
+            
             session = null;
             refSpace = null;
             imageAnchor = null;
