@@ -448,7 +448,7 @@ function render(timestamp, frame) {
                                 
                                 const previousAnchor = imageAnchor;
                                 imageAnchor = position;
-                                imageOrientation = orientation;
+                                imageOrientation = orientation; // 確保每次都更新
                                 
                                 trackingStatus.textContent = '✅ 已鎖定參考圖片';
                                 trackingStatus.style.background = 'rgba(76,175,80,0.9)';
@@ -458,9 +458,15 @@ function render(timestamp, frame) {
                                     log(`=== Image Tracked ===`);
                                     log(`Position: (${position.x.toFixed(3)}, ${position.y.toFixed(3)}, ${position.z.toFixed(3)})`);
                                     log(`Orientation: (${orientation.x.toFixed(3)}, ${orientation.y.toFixed(3)}, ${orientation.z.toFixed(3)}, ${orientation.w.toFixed(3)})`);
+                                    log(`Orientation magnitude: ${Math.sqrt(orientation.x**2 + orientation.y**2 + orientation.z**2 + orientation.w**2).toFixed(3)}`);
                                     
                                     if (currentMode === 'play' && markers.length === 0 && savedMarkers.length > 0) {
                                         restoreMarkers();
+                                    }
+                                } else {
+                                    // 持續更新(調試用)
+                                    if (Math.random() < 0.01) { // 1% 機率輸出,避免洗版
+                                        log(`Tracking update: Orient=(${orientation.x.toFixed(3)}, ${orientation.y.toFixed(3)}, ${orientation.z.toFixed(3)}, ${orientation.w.toFixed(3)})`);
                                     }
                                 }
                             }
