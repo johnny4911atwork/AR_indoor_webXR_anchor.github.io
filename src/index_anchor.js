@@ -2,18 +2,18 @@
 import * as THREE from "https://esm.sh/three";
 
 // 全域變數：基本渲染與 XR 會話狀態
-let camera, scene, renderer;          // Three.js 基本場景與相機、渲染器
-let session = null;                   // WebXR 目前的 AR 會話
-let refSpace = null;                  // 參考座標空間 (viewer / local-floor 等)
-let markers = [];                     // 已放置的訊號點物件集合
-let markerCount = 0;                  // 訊號點累計數量
-let savedMarkers = [];                // 儲存的訊號點資料
+let camera, scene, renderer;
+let session = null;
+let refSpace = null;
+let markers = [];
+let markerCount = 0;
+let savedMarkers = [];
 
 // Image Tracking 相關變數
-let currentMode = null;               // 'record' 或 'play'
-let referenceImage = null;            // 參考圖片的 Bitmap
-let trackedImages = new Map();        // 追蹤到的圖片位置
-let imageAnchor = null;               // 圖片錨點位置
+let currentMode = null;
+let referenceImage = null;
+let imageAnchor = null;
+let imageOrientation = null; // 新增：記錄圖片的旋轉方向
 
 const startButton = document.getElementById('startButton');
 const placeMarkerButton = document.getElementById('placeMarkerButton');
@@ -22,7 +22,6 @@ const clearButton = document.getElementById('clearButton');
 const info = document.getElementById('info');
 const markerCountDiv = document.getElementById('markerCount');
 
-// 新增的 UI 元素
 const modeSelection = document.getElementById('modeSelection');
 const recordModeButton = document.getElementById('recordModeButton');
 const playModeButton = document.getElementById('playModeButton');
@@ -40,49 +39,6 @@ const DB_VERSION = 1;
 const STORE_MARKERS = 'markers';
 const STORE_IMAGE = 'referenceImage';
 
-// 列印 IndexedDB 的內容（偵錯用）
-async function debugPrintIndexedDB(storeName) {
-    if (!db) {
-        log('Database not initialized');
-        return;
-    }
-
-    const transaction = db.transaction([storeName], 'readonly');
-    const store = transaction.objectStore(storeName);
-    const request = store.getAll();
-
-    request.onsuccess = () => {
-        log(`=== Contents of ${storeName} ===`);
-        console.table(request.result);
-        log(`Total records: ${request.result.length}`);
-    };
-
-    request.onerror = () => {
-        log(`Failed to read ${storeName}: ${request.error}`);
-    };
-}
-
-// 清除 IndexedDB 的內容（偵錯用）
-async function debugClearIndexedDB(storeName) {
-    if (!db) {
-        log('Database not initialized');
-        return;
-    }
-
-    const transaction = db.transaction([storeName], 'readwrite');
-    const store = transaction.objectStore(storeName);
-    const request = store.clear();
-
-    request.onsuccess = () => {
-        log(`${storeName} cleared successfully`);
-    };
-
-    request.onerror = () => {
-        log(`Failed to clear ${storeName}: ${request.error}`);
-    };
-}
-
-// 簡單除錯輸出：僅同步到 console
 function log(msg) {
     console.log(msg);
 }
@@ -106,13 +62,11 @@ function initIndexedDB() {
         request.onupgradeneeded = (event) => {
             const db = event.target.result;
             
-            // 建立訊號點資料表
             if (!db.objectStoreNames.contains(STORE_MARKERS)) {
                 db.createObjectStore(STORE_MARKERS, { keyPath: 'id' });
                 log('Created markers object store');
             }
             
-            // 建立參考圖片資料表
             if (!db.objectStoreNames.contains(STORE_IMAGE)) {
                 db.createObjectStore(STORE_IMAGE, { keyPath: 'id' });
                 log('Created image object store');
@@ -121,7 +75,6 @@ function initIndexedDB() {
     });
 }
 
-// 儲存資料到 IndexedDB
 function saveToIndexedDB(storeName, data) {
     return new Promise((resolve, reject) => {
         if (!db) {
@@ -138,7 +91,6 @@ function saveToIndexedDB(storeName, data) {
     });
 }
 
-// 從 IndexedDB 讀取資料
 function loadFromIndexedDB(storeName, id) {
     return new Promise((resolve, reject) => {
         if (!db) {
@@ -155,17 +107,13 @@ function loadFromIndexedDB(storeName, id) {
     });
 }
 
-// 初始化場景
-// 初始化 Three.js 場景與基礎光源、XR 設定
 function init() {
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
     
-    // 添加環境光
     const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
     light.position.set(0.5, 1, 0.25);
     scene.add(light);
-
 
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(window.devicePixelRatio);
@@ -177,8 +125,6 @@ function init() {
     log('Three.js initialized');
 }
 
-// 創建訊號點標記
-// 建立單一訊號點的 3D 造型 
 function createMarker(label = '') {
     const group = new THREE.Group();
 
@@ -189,16 +135,15 @@ function createMarker(label = '') {
         emissive: color,
         emissiveIntensity: 0.6,
         side: THREE.DoubleSide,
-        transparent: true, // 啟用透明
-        opacity: 0.8       // 設定透明度
+        transparent: true,
+        opacity: 0.8
     });
     const circle = new THREE.Mesh(circleGeometry, circleMaterial);
     circle.rotation.x = -Math.PI / 2;
     circle.position.y = -0.01;
-    circle.position.z = -0.01; // 圓形放在後面
+    circle.position.z = -0.01;
     group.add(circle);
 
-    // 編號文字平面
     const canvas = document.createElement('canvas');
     canvas.width = 128;
     canvas.height = 128;
@@ -219,13 +164,12 @@ function createMarker(label = '') {
     const textMesh = new THREE.Mesh(textGeometry, textMaterial);
     textMesh.position.y = 0.01;
     textMesh.rotation.x = -Math.PI / 2;
-    textMesh.position.z = 0.01; // 文字放在前面
+    textMesh.position.z = 0.01;
     group.add(textMesh);
 
     return group;
 }
 
-// 放置訊號點：在相機正前方固定距離處（支持自由放置）
 function placeMarker() {
     if (!session || !refSpace) {
         log('Session or refSpace not available');
@@ -233,7 +177,7 @@ function placeMarker() {
         return;
     }
 
-    if (!imageAnchor && currentMode === 'record') {
+    if (!imageAnchor) {
         info.textContent = '⚠️ 請先對準參考圖片，等待追蹤成功';
         return;
     }
@@ -248,20 +192,19 @@ function placeMarker() {
     const marker = createMarker(coordLabel);
     marker.position.copy(markerPosition);
     marker.userData.index = markerCount;
-    marker.userData.absolutePosition = markerPosition.clone(); // 保存絕對位置用於儲存
+    marker.userData.absolutePosition = markerPosition.clone();
     
     scene.add(marker);
     markers.push(marker);
     
     updateMarkerCount();
     info.textContent = `已放置訊號點 ${coordLabel}`;
-    log(`Marker ${markerCount} placed at (${marker.position.x.toFixed(2)}, ${marker.position.y.toFixed(2)}, ${marker.position.z.toFixed(2)})`);
+    log(`Marker ${markerCount} placed at (${markerPosition.x.toFixed(3)}, ${markerPosition.y.toFixed(3)}, ${markerPosition.z.toFixed(3)})`);
 }
 
-// 更新 UI 顯示目前訊號點數量
 function updateMarkerCount() {
     markerCountDiv.textContent = `訊號點數量: ${markerCount}`;
-    // 顯示/隱藏儲存按鈕
+    
     if (markerCount > 0 && session) {
         saveButton.style.display = 'inline-block';
         clearButton.style.display = 'inline-block';
@@ -269,41 +212,50 @@ function updateMarkerCount() {
         saveButton.style.display = 'none';
         clearButton.style.display = 'none';
     }
-    // 顯示/隱藏下載按鈕
-    if (savedMarkers.length > 0) {
-        downloadButton.style.display = 'inline-block';
-    } else {
-        downloadButton.style.display = 'none';
-    }
 }
 
-// 儲存所有訊號點
+// 修正：正確計算相對位置
 async function saveAllMarkers() {
     if (markers.length === 0) {
         info.textContent = '❌ 沒有訊號點可以儲存';
         return;
     }
 
-    if (!imageAnchor && currentMode === 'record') {
+    if (!imageAnchor) {
         info.textContent = '❌ 必須先對準參考圖片才能儲存';
         return;
     }
 
-    // 計算訊號點相對於參考圖片錨點的偏移量
-    savedMarkers = markers.map((marker, index) => {
-        const offset = new THREE.Vector3(
-            marker.position.x - imageAnchor.x,
-            marker.position.y - imageAnchor.y,
-            marker.position.z - imageAnchor.z
-        );
+    log(`=== 開始儲存 ===`);
+    log(`Image Anchor: (${imageAnchor.x.toFixed(3)}, ${imageAnchor.y.toFixed(3)}, ${imageAnchor.z.toFixed(3)})`);
+    
+    // 建立圖片座標系的逆矩陣
+    const imageMatrix = new THREE.Matrix4();
+    imageMatrix.setPosition(imageAnchor);
+    if (imageOrientation) {
+        imageMatrix.makeRotationFromQuaternion(imageOrientation);
+        imageMatrix.setPosition(imageAnchor);
+    }
+    const imageMatrixInverse = imageMatrix.clone().invert();
+
+    // 計算每個訊號點相對於圖片的局部座標
+    savedMarkers = markers.map((marker) => {
+        const worldPos = marker.userData.absolutePosition || marker.position;
+        
+        // 轉換到圖片的局部座標系
+        const localPos = worldPos.clone().applyMatrix4(imageMatrixInverse);
+        
+        log(`Marker #${marker.userData.index}:`);
+        log(`  World: (${worldPos.x.toFixed(3)}, ${worldPos.y.toFixed(3)}, ${worldPos.z.toFixed(3)})`);
+        log(`  Local: (${localPos.x.toFixed(3)}, ${localPos.y.toFixed(3)}, ${localPos.z.toFixed(3)})`);
         
         return {
             id: marker.userData.index,
             label: `#${marker.userData.index}`,
-            offset: {
-                x: offset.x,
-                y: offset.y,
-                z: offset.z
+            localPosition: {
+                x: localPos.x,
+                y: localPos.y,
+                z: localPos.z
             },
             timestamp: new Date().toISOString()
         };
@@ -311,16 +263,13 @@ async function saveAllMarkers() {
     
     // 儲存到 IndexedDB
     try {
-        // 儲存訊號點資料（相對位置）
         await saveToIndexedDB(STORE_MARKERS, {
             id: 'current',
             markers: savedMarkers,
             timestamp: new Date().toISOString()
         });
         
-        // 如果有參考圖片，也儲存
         if (referenceImage) {
-            // 將 ImageBitmap 轉換為 Blob
             const canvas = document.createElement('canvas');
             canvas.width = referenceImage.width;
             canvas.height = referenceImage.height;
@@ -338,8 +287,8 @@ async function saveAllMarkers() {
             });
         }
         
-        info.textContent = `✅ 已儲存 ${savedMarkers.length} 個訊號點（相對於參考圖片）`;
-        log(`Saved ${savedMarkers.length} markers with relative positions to image anchor`);
+        info.textContent = `✅ 已儲存 ${savedMarkers.length} 個訊號點`;
+        log(`Successfully saved ${savedMarkers.length} markers`);
     } catch (e) {
         info.textContent = '❌ 儲存失敗：' + e.message;
         log('Save error: ' + e.message);
@@ -348,29 +297,6 @@ async function saveAllMarkers() {
     updateMarkerCount();
 }
 
-// 下載訊號點為 JSON 檔案
-function downloadMarkersAsJSON() {
-    if (savedMarkers.length === 0) {
-        info.textContent = '❌ 沒有儲存的訊號點';
-        return;
-    }
-
-    const dataStr = JSON.stringify(savedMarkers, null, 2);
-    const dataBlob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(dataBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `markers_${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    info.textContent = `📥 已下載 ${savedMarkers.length} 個訊號點`;
-    log(`Downloaded ${savedMarkers.length} markers`);
-}
-
-// 清除所有訊號點
 function clearAllMarkers() {
     if (confirm('確定要清除所有訊號點嗎？')) {
         markers.forEach(marker => scene.remove(marker));
@@ -382,8 +308,6 @@ function clearAllMarkers() {
     }
 }
 
-// 開始 AR 會話
-// 啟動 AR：檢查支援、建立會話、選擇參考空間、啟動渲染迴圈
 async function startAR() {
     log('Starting AR...');
     
@@ -402,7 +326,6 @@ async function startAR() {
             optionalFeatures: ['local-floor']
         };
         
-        // 如果有參考圖片，啟用 image-tracking（必須列在 requiredFeatures 才會啟用）
         if (referenceImage) {
             try {
                 if (!sessionInit.requiredFeatures.includes('image-tracking')) {
@@ -410,7 +333,7 @@ async function startAR() {
                 }
                 sessionInit.trackedImages = [{
                     image: referenceImage,
-                    widthInMeters: 0.3 // 假設圖片寬度為 30cm（A4 紙大小）
+                    widthInMeters: 0.3
                 }];
                 log('Image tracking configuration added');
                 log(`Image size: ${referenceImage.width}x${referenceImage.height}`);
@@ -426,21 +349,19 @@ async function startAR() {
         await renderer.xr.setSession(session);
         log('Renderer XR session set');
 
-        // 嘗試不同的參考空間
         try {
             log('Trying local-floor...');
             refSpace = await session.requestReferenceSpace('local-floor');
             log('Using local-floor reference space');
         } catch (e) {
             log('local-floor failed, trying viewer...');
-                refSpace = await session.requestReferenceSpace('viewer');
-                log('Using viewer reference space');
+            refSpace = await session.requestReferenceSpace('viewer');
+            log('Using viewer reference space');
         }
 
         session.addEventListener('end', () => {
             log('AR session ended');
             
-            // 移除所有訊號點
             markers.forEach(marker => scene.remove(marker));
             markers = [];
             markerCount = 0;
@@ -448,6 +369,7 @@ async function startAR() {
             session = null;
             refSpace = null;
             imageAnchor = null;
+            imageOrientation = null;
             startButton.style.display = 'none';
             placeMarkerButton.style.display = 'none';
             saveButton.style.display = 'none';
@@ -462,7 +384,6 @@ async function startAR() {
         markerCountDiv.style.display = 'block';
         updateMarkerCount();
         
-        // 顯示追蹤狀態
         if (referenceImage) {
             trackingStatus.style.display = 'block';
             trackingStatus.textContent = '🔍 尋找參考圖片中...';
@@ -486,12 +407,10 @@ async function startAR() {
     }
 }
 
-// 每一幀的渲染：更新相機姿態後繪製場景
 function render(timestamp, frame) {
     if (frame && refSpace) {
         const pose = frame.getViewerPose(refSpace);
         if (pose) {
-            // 更新相機位置以便放置標記時使用
             const view = pose.views[0];
             camera.matrix.fromArray(view.transform.matrix);
             camera.matrix.decompose(camera.position, camera.quaternion, camera.scale);
@@ -520,19 +439,26 @@ function render(timestamp, frame) {
                                     transform.position.z
                                 );
                                 
-                                // 更新圖片錨點位置
+                                const orientation = new THREE.Quaternion(
+                                    transform.orientation.x,
+                                    transform.orientation.y,
+                                    transform.orientation.z,
+                                    transform.orientation.w
+                                );
+                                
                                 const previousAnchor = imageAnchor;
                                 imageAnchor = position;
+                                imageOrientation = orientation;
                                 
-                                // 更新追蹤狀態顯示
                                 trackingStatus.textContent = '✅ 已鎖定參考圖片';
                                 trackingStatus.style.background = 'rgba(76,175,80,0.9)';
                                 
-                                // 如果是第一次追蹤到
+                                // 第一次追蹤到
                                 if (!previousAnchor) {
-                                    log(`Image first tracked at (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
+                                    log(`=== Image Tracked ===`);
+                                    log(`Position: (${position.x.toFixed(3)}, ${position.y.toFixed(3)}, ${position.z.toFixed(3)})`);
+                                    log(`Orientation: (${orientation.x.toFixed(3)}, ${orientation.y.toFixed(3)}, ${orientation.z.toFixed(3)}, ${orientation.w.toFixed(3)})`);
                                     
-                                    // 如果是播放模式，重現訊號點
                                     if (currentMode === 'play' && markers.length === 0 && savedMarkers.length > 0) {
                                         restoreMarkers();
                                     }
@@ -542,7 +468,6 @@ function render(timestamp, frame) {
                             tracked = true;
                             trackingStatus.textContent = '⚠️ 模擬追蹤中';
                             trackingStatus.style.background = 'rgba(255,152,0,0.9)';
-                            log('Image tracking: emulated');
                         }
                     }
                     
@@ -550,6 +475,7 @@ function render(timestamp, frame) {
                         trackingStatus.textContent = '🔍 尋找參考圖片中...';
                         trackingStatus.style.background = 'rgba(255,152,0,0.9)';
                         imageAnchor = null;
+                        imageOrientation = null;
                     }
                 } else {
                     trackingStatus.textContent = '🔍 尋找參考圖片中...';
@@ -559,7 +485,6 @@ function render(timestamp, frame) {
                 log('Image tracking error: ' + e.message);
             }
         } else if (referenceImage && !frame.getImageTrackingResults) {
-            // 如果不支援 image tracking
             if (trackingStatus.textContent.indexOf('不支援') === -1) {
                 trackingStatus.textContent = '❌ 裝置不支援圖片追蹤';
                 trackingStatus.style.background = 'rgba(244,67,54,0.9)';
@@ -570,8 +495,6 @@ function render(timestamp, frame) {
     renderer.render(scene, camera);
 }
 
-// 檢查 WebXR 支援
-// 啟動前檢查裝置與瀏覽器是否支援 WebXR AR 會話
 async function checkWebXRSupport() {
     if (!navigator.xr) {
         info.textContent = '❌ 您的瀏覽器不支援 WebXR';
@@ -614,40 +537,59 @@ async function checkWebXRSupport() {
     }
 }
 
-// 重現儲存的訊號點 - 使用保存的相對位置
+// 修正：使用局部座標系重現
 function restoreMarkers() {
-    if (!imageAnchor || savedMarkers.length === 0) return;
+    if (!imageAnchor || savedMarkers.length === 0) {
+        log('Cannot restore: imageAnchor=' + !!imageAnchor + ', savedMarkers=' + savedMarkers.length);
+        return;
+    }
     
-    log('Restoring markers relative to image anchor...');
+    log(`=== 開始重現 ===`);
+    log(`Image Anchor: (${imageAnchor.x.toFixed(3)}, ${imageAnchor.y.toFixed(3)}, ${imageAnchor.z.toFixed(3)})`);
+    
+    // 建立圖片的變換矩陣
+    const imageMatrix = new THREE.Matrix4();
+    imageMatrix.setPosition(imageAnchor);
+    if (imageOrientation) {
+        imageMatrix.makeRotationFromQuaternion(imageOrientation);
+        imageMatrix.setPosition(imageAnchor);
+        log(`Image Orientation: (${imageOrientation.x.toFixed(3)}, ${imageOrientation.y.toFixed(3)}, ${imageOrientation.z.toFixed(3)}, ${imageOrientation.w.toFixed(3)})`);
+    }
     
     // 清除已存在的訊號點
     markers.forEach(marker => scene.remove(marker));
     markers = [];
     
-    // 根據新掃描的 imageAnchor 和保存的相對位置重現訊號點
+    // 重現訊號點
     savedMarkers.forEach((data) => {
         const marker = createMarker(data.label);
         
-        // 使用保存的偏移量 + 新的 imageAnchor 位置
-        if (data.offset) {
-            const worldPosition = new THREE.Vector3(
-                imageAnchor.x + data.offset.x,
-                imageAnchor.y + data.offset.y,
-                imageAnchor.z + data.offset.z
+        if (data.localPosition) {
+            // 從局部座標轉換回世界座標
+            const localPos = new THREE.Vector3(
+                data.localPosition.x,
+                data.localPosition.y,
+                data.localPosition.z
             );
+            const worldPosition = localPos.applyMatrix4(imageMatrix);
+            
             marker.position.copy(worldPosition);
+            marker.userData.absolutePosition = worldPosition.clone();
+            marker.userData.index = data.id;
+            
+            log(`Restored Marker ${data.label}:`);
+            log(`  Local: (${localPos.x.toFixed(3)}, ${localPos.y.toFixed(3)}, ${localPos.z.toFixed(3)})`);
+            log(`  World: (${worldPosition.x.toFixed(3)}, ${worldPosition.y.toFixed(3)}, ${worldPosition.z.toFixed(3)})`);
+            
+            scene.add(marker);
+            markers.push(marker);
         }
-        
-        marker.userData.index = data.id;
-        
-        scene.add(marker);
-        markers.push(marker);
     });
     
     markerCount = markers.length;
     updateMarkerCount();
     info.textContent = `✅ 已重現 ${markers.length} 個訊號點`;
-    log(`Restored ${markers.length} markers at relative positions to new image anchor`);
+    log(`Successfully restored ${markers.length} markers`);
 }
 
 // 圖片上傳處理
@@ -661,7 +603,6 @@ imageInput.addEventListener('change', async (event) => {
         imagePreview.style.display = 'block';
         confirmImageButton.style.display = 'inline-block';
         
-        // 建立 ImageBitmap（保留原始解析度）
         const img = new Image();
         img.onload = async () => {
             referenceImage = await createImageBitmap(img);
@@ -702,7 +643,6 @@ recordModeButton.addEventListener('click', () => {
 playModeButton.addEventListener('click', async () => {
     currentMode = 'play';
     
-    // 載入儲存的資料
     try {
         const markersData = await loadFromIndexedDB(STORE_MARKERS, 'current');
         const imageData = await loadFromIndexedDB(STORE_IMAGE, 'current');
@@ -713,7 +653,6 @@ playModeButton.addEventListener('click', async () => {
             return;
         }
         
-        // 載入訊號點資料（已包含相對位置）
         savedMarkers = markersData.markers || [];
         
         if (savedMarkers.length === 0) {
@@ -722,14 +661,12 @@ playModeButton.addEventListener('click', async () => {
             return;
         }
         
-        // 載入參考圖片（從 Blob 轉換為 ImageBitmap）
         referenceImage = await createImageBitmap(imageData.imageBlob);
         
         modeSelection.style.display = 'none';
         startButton.style.display = 'block';
         info.textContent = `✅ 已載入 ${savedMarkers.length} 個訊號點，對準參考圖片後開始 AR`;
-        log(`Play mode: data loaded, ${savedMarkers.length} markers, image ${referenceImage.width}x${referenceImage.height}`);
-        log('Markers:', savedMarkers);
+        log(`Play mode: loaded ${savedMarkers.length} markers, image ${referenceImage.width}x${referenceImage.height}`);
         
     } catch (e) {
         info.textContent = '❌ 載入資料失敗：' + e.message;
@@ -741,7 +678,6 @@ playModeButton.addEventListener('click', async () => {
 startButton.addEventListener('click', startAR);
 placeMarkerButton.addEventListener('click', placeMarker);
 saveButton.addEventListener('click', saveAllMarkers);
-downloadButton.addEventListener('click', downloadMarkersAsJSON);
 clearButton.addEventListener('click', clearAllMarkers);
 
 // 初始化
