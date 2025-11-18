@@ -40,6 +40,48 @@ const DB_VERSION = 1;
 const STORE_MARKERS = 'markers';
 const STORE_IMAGE = 'referenceImage';
 
+// 列印 IndexedDB 的內容（偵錯用）
+async function debugPrintIndexedDB(storeName) {
+    if (!db) {
+        log('Database not initialized');
+        return;
+    }
+
+    const transaction = db.transaction([storeName], 'readonly');
+    const store = transaction.objectStore(storeName);
+    const request = store.getAll();
+
+    request.onsuccess = () => {
+        log(`=== Contents of ${storeName} ===`);
+        console.table(request.result);
+        log(`Total records: ${request.result.length}`);
+    };
+
+    request.onerror = () => {
+        log(`Failed to read ${storeName}: ${request.error}`);
+    };
+}
+
+// 清除 IndexedDB 的內容（偵錯用）
+async function debugClearIndexedDB(storeName) {
+    if (!db) {
+        log('Database not initialized');
+        return;
+    }
+
+    const transaction = db.transaction([storeName], 'readwrite');
+    const store = transaction.objectStore(storeName);
+    const request = store.clear();
+
+    request.onsuccess = () => {
+        log(`${storeName} cleared successfully`);
+    };
+
+    request.onerror = () => {
+        log(`Failed to clear ${storeName}: ${request.error}`);
+    };
+}
+
 // 簡單除錯輸出：僅同步到 console
 function log(msg) {
     console.log(msg);
