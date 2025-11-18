@@ -14,6 +14,8 @@ let currentMode = null;               // 'record' 或 'play'
 let referenceImage = null;            // 參考圖片的 Bitmap
 let trackedImages = new Map();        // 追蹤到的圖片位置
 let imageAnchor = null;               // 圖片錨點位置
+let imageAnchorMatrix = null;         // 圖片錨點的世界矩陣
+let imageAnchorMatrixInverse = null;  // 圖片錨點矩陣的反矩陣
 
 const startButton = document.getElementById('startButton');
 const placeMarkerButton = document.getElementById('placeMarkerButton');
@@ -201,15 +203,22 @@ function placeMarker() {
     markerPosition.y = camera.position.y - 1.6; // 腳下約 1.6 米
 
     // 如果有圖片錨點，計算相對位置
-    let relativePosition = markerPosition;
-    if (imageAnchor) {
-        relativePosition = markerPosition.clone().sub(imageAnchor);
+    let relativePosition = markerPosition.clone();
+    let relativeSpace = 'absolute';
+
+    if (imageAnchorMatrixInverse) {
+        relativePosition.applyMatrix4(imageAnchorMatrixInverse);
+        relativeSpace = 'anchor-local';
+    } else if (imageAnchor) {
+        relativePosition.sub(imageAnchor);
+        relativeSpace = 'world';
     }
 
     const coordLabel = `#${markerCount}`;
     const marker = createMarker(coordLabel);
     marker.position.copy(markerPosition);
     marker.userData.relativePosition = relativePosition; // 儲存相對位置
+    marker.userData.relativeSpace = relativeSpace;
     
     scene.add(marker);
     markers.push(marker);
@@ -217,7 +226,7 @@ function placeMarker() {
     updateMarkerCount();
     info.textContent = `已放置訊號點 ${coordLabel}`;
     log(`Marker ${markerCount} placed at (${marker.position.x.toFixed(2)}, ${marker.position.y.toFixed(2)}, ${marker.position.z.toFixed(2)})`);
-    log(`Relative to anchor: (${relativePosition.x.toFixed(2)}, ${relativePosition.y.toFixed(2)}, ${relativePosition.z.toFixed(2)})`);
+    log(`Relative (${relativeSpace}) to anchor: (${relativePosition.x.toFixed(2)}, ${relativePosition.y.toFixed(2)}, ${relativePosition.z.toFixed(2)})`);
 }
 
 // 更新 UI 顯示目前訊號點數量
@@ -249,10 +258,11 @@ async function saveAllMarkers() {
     // 將目前的訊號點資料儲存（相對座標）
     const markerData = markers.map((marker, index) => ({
         id: index + 1,
-        relativePosition: marker.userData.relativePosition || {
-            x: marker.position.x,
-            y: marker.position.y,
-            z: marker.position.z
+        relativePosition: {
+            x: (marker.userData.relativePosition?.x ?? marker.position.x),
+            y: (marker.userData.relativePosition?.y ?? marker.position.y),
+            z: (marker.userData.relativePosition?.z ?? marker.position.z),
+            space: marker.userData.relativeSpace || 'world'
         },
         label: `#${index + 1}`,
         timestamp: new Date().toISOString()
@@ -399,6 +409,8 @@ async function startAR() {
             session = null;
             refSpace = null;
             imageAnchor = null;
+            imageAnchorMatrix = null;
+            imageAnchorMatrixInverse = null;
             startButton.style.display = 'none';
             placeMarkerButton.style.display = 'none';
             saveButton.style.display = 'none';
@@ -470,10 +482,22 @@ function render(timestamp, frame) {
                                     transform.position.y,
                                     transform.position.z
                                 );
+                                const orientation = new THREE.Quaternion(
+                                    transform.orientation?.x ?? 0,
+                                    transform.orientation?.y ?? 0,
+                                    transform.orientation?.z ?? 0,
+                                    transform.orientation?.w ?? 1
+                                );
                                 
                                 // 更新圖片錨點位置
                                 const previousAnchor = imageAnchor;
-                                imageAnchor = position;
+                                imageAnchor = position.clone();
+                                imageAnchorMatrix = new THREE.Matrix4().compose(
+                                    imageAnchor.clone(),
+                                    orientation.normalize(),
+                                    new THREE.Vector3(1, 1, 1)
+                                );
+                                imageAnchorMatrixInverse = imageAnchorMatrix.clone().invert();
                                 
                                 // 更新追蹤狀態顯示
                                 trackingStatus.textContent = '✅ 已鎖定參考圖片';
@@ -501,10 +525,14 @@ function render(timestamp, frame) {
                         trackingStatus.textContent = '🔍 尋找參考圖片中...';
                         trackingStatus.style.background = 'rgba(255,152,0,0.9)';
                         imageAnchor = null;
+                        imageAnchorMatrix = null;
+                        imageAnchorMatrixInverse = null;
                     }
                 } else {
                     trackingStatus.textContent = '🔍 尋找參考圖片中...';
                     trackingStatus.style.background = 'rgba(255,152,0,0.9)';
+                    imageAnchorMatrix = null;
+                    imageAnchorMatrixInverse = null;
                 }
             } catch (e) {
                 log('Image tracking error: ' + e.message);
@@ -516,6 +544,8 @@ function render(timestamp, frame) {
                 trackingStatus.style.background = 'rgba(244,67,54,0.9)';
                 log('ERROR: Image tracking not supported by device');
             }
+            imageAnchorMatrix = null;
+            imageAnchorMatrixInverse = null;
         }
     }
     renderer.render(scene, camera);
@@ -573,20 +603,34 @@ function restoreMarkers() {
     
     savedMarkers.forEach((data) => {
         const marker = createMarker(data.label);
-        
-        // 使用相對位置加上圖片錨點位置
-        const worldPosition = new THREE.Vector3(
-            imageAnchor.x + data.relativePosition.x,
-            imageAnchor.y + data.relativePosition.y,
-            imageAnchor.z + data.relativePosition.z
+        const stored = data.relativePosition || {};
+        const relativeSpace = stored.space || 'world';
+        const relativeVector = new THREE.Vector3(
+            stored.x ?? 0,
+            stored.y ?? 0,
+            stored.z ?? 0
         );
+        let worldPosition;
+
+        if (relativeSpace === 'anchor-local') {
+            if (!imageAnchorMatrix) {
+                log('⚠️ Anchor matrix missing, skipping anchor-local marker');
+                return;
+            }
+            worldPosition = relativeVector.clone().applyMatrix4(imageAnchorMatrix);
+        } else if (relativeSpace === 'world') {
+            worldPosition = new THREE.Vector3(
+                imageAnchor.x + relativeVector.x,
+                imageAnchor.y + relativeVector.y,
+                imageAnchor.z + relativeVector.z
+            );
+        } else {
+            worldPosition = relativeVector.clone();
+        }
         
         marker.position.copy(worldPosition);
-        marker.userData.relativePosition = new THREE.Vector3(
-            data.relativePosition.x,
-            data.relativePosition.y,
-            data.relativePosition.z
-        );
+        marker.userData.relativePosition = relativeVector.clone();
+        marker.userData.relativeSpace = relativeSpace;
         
         scene.add(marker);
         markers.push(marker);
