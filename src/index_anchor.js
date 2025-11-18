@@ -183,7 +183,7 @@ function createMarker(label = '') {
     return group;
 }
 
-// 放置訊號點：以目前相機位置為基準，落在「腳下」高度
+// 放置訊號點：在相機正前方固定距離處（支持自由放置）
 function placeMarker() {
     if (!session || !refSpace) {
         log('Session or refSpace not available');
@@ -197,13 +197,16 @@ function placeMarker() {
     }
 
     markerCount++;
+    
+    // 在腳下放置訊號點
     const markerPosition = camera.position.clone();
-    markerPosition.y = camera.position.y - 1.6; // 腳下約 1.6 米
+    markerPosition.y = camera.position.y - 1.6;
 
     const coordLabel = `#${markerCount}`;
     const marker = createMarker(coordLabel);
     marker.position.copy(markerPosition);
-    marker.userData.index = markerCount; // 只儲存訊號點的編號
+    marker.userData.index = markerCount;
+    marker.userData.absolutePosition = markerPosition.clone(); // 保存絕對位置用於儲存
     
     scene.add(marker);
     markers.push(marker);
@@ -239,20 +242,24 @@ async function saveAllMarkers() {
         return;
     }
 
-    // 只儲存訊號點數量（不儲存座標資訊）
-    const markerCount = markers.length;
-    savedMarkers = Array.from({ length: markerCount }, (_, i) => ({
-        id: i + 1,
-        label: `#${i + 1}`,
+    // 儲存訊號點的絕對座標
+    savedMarkers = markers.map((marker, index) => ({
+        id: marker.userData.index,
+        label: `#${marker.userData.index}`,
+        position: {
+            x: marker.position.x,
+            y: marker.position.y,
+            z: marker.position.z
+        },
         timestamp: new Date().toISOString()
     }));
     
     // 儲存到 IndexedDB
     try {
-        // 儲存訊號點資料（只儲存數量）
+        // 儲存訊號點資料（包含座標）
         await saveToIndexedDB(STORE_MARKERS, {
             id: 'current',
-            markerCount: markerCount,
+            markers: savedMarkers,
             timestamp: new Date().toISOString()
         });
         
@@ -552,9 +559,9 @@ async function checkWebXRSupport() {
     }
 }
 
-// 重現儲存的訊號點 - 即時基於參考圖片的追蹤位置生成
+// 重現儲存的訊號點 - 使用保存的絕對座標
 function restoreMarkers() {
-    if (!imageAnchor || savedMarkers.length === 0) return;
+    if (savedMarkers.length === 0) return;
     
     log('Restoring markers...');
     
@@ -562,21 +569,25 @@ function restoreMarkers() {
     markers.forEach(marker => scene.remove(marker));
     markers = [];
     
-    // 根據參考圖片錨點和訊號點編號動態生成位置
-    savedMarkers.forEach((data, index) => {
+    // 根據保存的絕對座標重現訊號點
+    savedMarkers.forEach((data) => {
         const marker = createMarker(data.label);
         
-        // 基於圖片錨點，使用簡單的線性排列
-        // 可根據需求調整訊號點的布局方式
-        const offset = 0.25 * (index + 1); // 每個訊號點距離圖片錨點 0.25m
-        const worldPosition = new THREE.Vector3(
-            imageAnchor.x + offset,
-            imageAnchor.y,
-            imageAnchor.z - 0.2 * (index % 2) // 稍微交錯排列
-        );
+        // 使用保存的座標
+        if (data.position) {
+            marker.position.set(
+                data.position.x,
+                data.position.y,
+                data.position.z
+            );
+        }
         
-        marker.position.copy(worldPosition);
         marker.userData.index = data.id;
+        marker.userData.absolutePosition = new THREE.Vector3(
+            data.position.x,
+            data.position.y,
+            data.position.z
+        );
         
         scene.add(marker);
         markers.push(marker);
