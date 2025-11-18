@@ -480,8 +480,9 @@ function render(timestamp, frame) {
                     if (!tracked) {
                         trackingStatus.textContent = '🔍 尋找參考圖片中...';
                         trackingStatus.style.background = 'rgba(255,152,0,0.9)';
-                        imageAnchor = null;
-                        imageOrientation = null;
+                        // 不要清空 imageAnchor 和 imageOrientation,保留最後的值
+                        // imageAnchor = null;
+                        // imageOrientation = null;
                     }
                 } else {
                     trackingStatus.textContent = '🔍 尋找參考圖片中...';
