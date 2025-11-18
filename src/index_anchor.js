@@ -18,7 +18,6 @@ let imageAnchor = null;               // 圖片錨點位置
 const startButton = document.getElementById('startButton');
 const placeMarkerButton = document.getElementById('placeMarkerButton');
 const saveButton = document.getElementById('saveButton');
-const downloadButton = document.getElementById('downloadButton');
 const clearButton = document.getElementById('clearButton');
 const info = document.getElementById('info');
 const markerCountDiv = document.getElementById('markerCount');
@@ -50,6 +49,7 @@ function init() {
     light.position.set(0.5, 1, 0.25);
     scene.add(light);
 
+
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -77,7 +77,7 @@ function createMarker(label = '') {
     });
     const circle = new THREE.Mesh(circleGeometry, circleMaterial);
     circle.rotation.x = -Math.PI / 2;
-    circle.position.y = 0;
+    circle.position.y = -0.01;
     circle.position.z = -0.01; // 圓形放在後面
     group.add(circle);
 
@@ -100,7 +100,7 @@ function createMarker(label = '') {
     });
     const textGeometry = new THREE.PlaneGeometry(0.3, 0.3);
     const textMesh = new THREE.Mesh(textGeometry, textMaterial);
-    textMesh.position.y = 0;
+    textMesh.position.y = 0.01;
     textMesh.rotation.x = -Math.PI / 2;
     textMesh.position.z = 0.01; // 文字放在前面
     group.add(textMesh);
@@ -189,15 +189,25 @@ async function saveAllMarkers() {
     try {
         localStorage.setItem('ar_markers', JSON.stringify(savedMarkers));
         
-        // 如果有參考圖片，也儲存
+        // 如果有參考圖片，也儲存（壓縮版本）
         if (referenceImage) {
             const canvas = document.createElement('canvas');
             canvas.width = referenceImage.width;
             canvas.height = referenceImage.height;
             const ctx = canvas.getContext('2d');
             ctx.drawImage(referenceImage, 0, 0);
-            const imageData = canvas.toDataURL('image/png');
-            localStorage.setItem('ar_reference_image', imageData);
+            
+            const tempImg = new Image();
+            tempImg.onload = async () => {
+                const compressedData = await compressImage(tempImg);
+                try {
+                    localStorage.setItem('ar_reference_image', compressedData);
+                    log(`Image compressed and saved (size: ${Math.round(compressedData.length / 1024)}KB)`);
+                } catch (storageErr) {
+                    log('Storage error: ' + storageErr.message);
+                }
+            };
+            tempImg.src = canvas.toDataURL('image/png');
         }
         
         info.textContent = `✅ 已儲存 ${savedMarkers.length} 個訊號點`;
@@ -468,6 +478,28 @@ async function checkWebXRSupport() {
         info.textContent = '❌ 檢查 AR 支援時發生錯誤';
         log('ERROR checking AR support: ' + err.message);
     }
+}
+
+// 壓縮圖片為 Base64 資料 URL（寬度限制 1024px，品質 0.8）
+async function compressImage(img) {
+    const maxWidth = 1024;
+    const canvas = document.createElement('canvas');
+    let width = img.width;
+    let height = img.height;
+    
+    // 計算縮放比例
+    if (width > maxWidth) {
+        height = (height * maxWidth) / width;
+        width = maxWidth;
+    }
+    
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, width, height);
+    
+    // 轉換為 JPEG 格式，品質設定為 0.8
+    return canvas.toDataURL('image/jpeg', 0.8);
 }
 
 // 重現儲存的訊號點
