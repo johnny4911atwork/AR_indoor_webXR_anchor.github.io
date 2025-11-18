@@ -33,9 +33,84 @@ const confirmImageButton = document.getElementById('confirmImageButton');
 const cancelImageButton = document.getElementById('cancelImageButton');
 const trackingStatus = document.getElementById('trackingStatus');
 
+// IndexedDB 相關變數
+let db = null;
+const DB_NAME = 'AR_Waypoints_DB';
+const DB_VERSION = 1;
+const STORE_MARKERS = 'markers';
+const STORE_IMAGE = 'referenceImage';
+
 // 簡單除錯輸出：僅同步到 console
 function log(msg) {
     console.log(msg);
+}
+
+// 初始化 IndexedDB
+function initIndexedDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        
+        request.onerror = () => {
+            log('IndexedDB error: ' + request.error);
+            reject(request.error);
+        };
+        
+        request.onsuccess = () => {
+            db = request.result;
+            log('IndexedDB initialized');
+            resolve(db);
+        };
+        
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            
+            // 建立訊號點資料表
+            if (!db.objectStoreNames.contains(STORE_MARKERS)) {
+                db.createObjectStore(STORE_MARKERS, { keyPath: 'id' });
+                log('Created markers object store');
+            }
+            
+            // 建立參考圖片資料表
+            if (!db.objectStoreNames.contains(STORE_IMAGE)) {
+                db.createObjectStore(STORE_IMAGE, { keyPath: 'id' });
+                log('Created image object store');
+            }
+        };
+    });
+}
+
+// 儲存資料到 IndexedDB
+function saveToIndexedDB(storeName, data) {
+    return new Promise((resolve, reject) => {
+        if (!db) {
+            reject(new Error('Database not initialized'));
+            return;
+        }
+        
+        const transaction = db.transaction([storeName], 'readwrite');
+        const store = transaction.objectStore(storeName);
+        const request = store.put(data);
+        
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+    });
+}
+
+// 從 IndexedDB 讀取資料
+function loadFromIndexedDB(storeName, id) {
+    return new Promise((resolve, reject) => {
+        if (!db) {
+            reject(new Error('Database not initialized'));
+            return;
+        }
+        
+        const transaction = db.transaction([storeName], 'readonly');
+        const store = transaction.objectStore(storeName);
+        const request = store.get(id);
+        
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
 }
 
 // 初始化場景
@@ -185,33 +260,37 @@ async function saveAllMarkers() {
 
     savedMarkers = [...markerData];
     
-    // 儲存到 localStorage
+    // 儲存到 IndexedDB
     try {
-        localStorage.setItem('ar_markers', JSON.stringify(savedMarkers));
+        // 儲存訊號點資料
+        await saveToIndexedDB(STORE_MARKERS, {
+            id: 'current',
+            markers: savedMarkers,
+            timestamp: new Date().toISOString()
+        });
         
-        // 如果有參考圖片，也儲存（壓縮版本）
+        // 如果有參考圖片，也儲存
         if (referenceImage) {
+            // 將 ImageBitmap 轉換為 Blob
             const canvas = document.createElement('canvas');
             canvas.width = referenceImage.width;
             canvas.height = referenceImage.height;
             const ctx = canvas.getContext('2d');
             ctx.drawImage(referenceImage, 0, 0);
             
-            const tempImg = new Image();
-            tempImg.onload = async () => {
-                const compressedData = await compressImage(tempImg);
-                try {
-                    localStorage.setItem('ar_reference_image', compressedData);
-                    log(`Image compressed and saved (size: ${Math.round(compressedData.length / 1024)}KB)`);
-                } catch (storageErr) {
-                    log('Storage error: ' + storageErr.message);
-                }
-            };
-            tempImg.src = canvas.toDataURL('image/png');
+            const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+            
+            await saveToIndexedDB(STORE_IMAGE, {
+                id: 'current',
+                imageBlob: blob,
+                width: referenceImage.width,
+                height: referenceImage.height,
+                timestamp: new Date().toISOString()
+            });
         }
         
         info.textContent = `✅ 已儲存 ${savedMarkers.length} 個訊號點`;
-        log(`Saved ${savedMarkers.length} markers to localStorage`);
+        log(`Saved ${savedMarkers.length} markers to IndexedDB`);
     } catch (e) {
         info.textContent = '❌ 儲存失敗：' + e.message;
         log('Save error: ' + e.message);
@@ -480,28 +559,6 @@ async function checkWebXRSupport() {
     }
 }
 
-// 壓縮圖片為 Base64 資料 URL（寬度限制 2048px，品質 1.0）
-async function compressImage(img) {
-    const maxWidth = 2048;
-    const canvas = document.createElement('canvas');
-    let width = img.width;
-    let height = img.height;
-    
-    // 計算縮放比例
-    if (width > maxWidth) {
-        height = (height * maxWidth) / width;
-        width = maxWidth;
-    }
-    
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0, width, height);
-    
-    // 轉換為 JPEG 格式，品質設定為 0.8
-    return canvas.toDataURL('image/jpeg', 1.0);
-}
-
 // 重現儲存的訊號點
 function restoreMarkers() {
     if (!imageAnchor || savedMarkers.length === 0) return;
@@ -546,7 +603,7 @@ imageInput.addEventListener('change', async (event) => {
         imagePreview.style.display = 'block';
         confirmImageButton.style.display = 'inline-block';
         
-        // 建立 ImageBitmap
+        // 建立 ImageBitmap（保留原始解析度）
         const img = new Image();
         img.onload = async () => {
             referenceImage = await createImageBitmap(img);
@@ -589,8 +646,8 @@ playModeButton.addEventListener('click', async () => {
     
     // 載入儲存的資料
     try {
-        const markersData = localStorage.getItem('ar_markers');
-        const imageData = localStorage.getItem('ar_reference_image');
+        const markersData = await loadFromIndexedDB(STORE_MARKERS, 'current');
+        const imageData = await loadFromIndexedDB(STORE_IMAGE, 'current');
         
         if (!markersData || !imageData) {
             info.textContent = '❌ 沒有找到儲存的資料';
@@ -598,18 +655,15 @@ playModeButton.addEventListener('click', async () => {
             return;
         }
         
-        savedMarkers = JSON.parse(markersData);
+        savedMarkers = markersData.markers;
         
-        // 載入參考圖片（保留原始解析度）
-        const img = new Image();
-        img.onload = async () => {
-            referenceImage = await createImageBitmap(img);
-            modeSelection.style.display = 'none';
-            startButton.style.display = 'block';
-            info.textContent = `✅ 已載入 ${savedMarkers.length} 個訊號點，對準參考圖片後開始 AR`;
-            log(`Play mode: data loaded, image ${referenceImage.width}x${referenceImage.height}`);
-        };
-        img.src = imageData;
+        // 載入參考圖片（從 Blob 轉換為 ImageBitmap）
+        referenceImage = await createImageBitmap(imageData.imageBlob);
+        
+        modeSelection.style.display = 'none';
+        startButton.style.display = 'block';
+        info.textContent = `✅ 已載入 ${savedMarkers.length} 個訊號點，對準參考圖片後開始 AR`;
+        log(`Play mode: data loaded, image ${referenceImage.width}x${referenceImage.height}`);
         
     } catch (e) {
         info.textContent = '❌ 載入資料失敗：' + e.message;
@@ -626,4 +680,9 @@ clearButton.addEventListener('click', clearAllMarkers);
 
 // 初始化
 init();
-checkWebXRSupport();
+initIndexedDB().then(() => {
+    checkWebXRSupport();
+}).catch(err => {
+    log('IndexedDB initialization failed: ' + err.message);
+    info.textContent = '❌ 資料庫初始化失敗，部分功能可能無法使用';
+});
