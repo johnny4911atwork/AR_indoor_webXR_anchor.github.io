@@ -480,9 +480,9 @@ async function checkWebXRSupport() {
     }
 }
 
-// 壓縮圖片為 Base64 資料 URL（寬度限制 1024px，品質 0.8）
+// 壓縮圖片為 Base64 資料 URL（寬度限制 2048px，品質 1.0）
 async function compressImage(img) {
-    const maxWidth = 1024;
+    const maxWidth = 2048;
     const canvas = document.createElement('canvas');
     let width = img.width;
     let height = img.height;
@@ -499,7 +499,7 @@ async function compressImage(img) {
     ctx.drawImage(img, 0, 0, width, height);
     
     // 轉換為 JPEG 格式，品質設定為 0.8
-    return canvas.toDataURL('image/jpeg', 0.8);
+    return canvas.toDataURL('image/jpeg', 1.0);
 }
 
 // 重現儲存的訊號點
@@ -546,7 +546,7 @@ imageInput.addEventListener('change', async (event) => {
         imagePreview.style.display = 'block';
         confirmImageButton.style.display = 'inline-block';
         
-        // 建立 ImageBitmap（保留原始解析度）
+        // 建立 ImageBitmap
         const img = new Image();
         img.onload = async () => {
             referenceImage = await createImageBitmap(img);
